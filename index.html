@@ -1,0 +1,966 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Schach-Analyse</title>
+<style>
+  :root {
+    --bg: #f3f1ec; --panel: #ffffff; --text: #23211d; --muted: #6b675f;
+    --light: #ebe3cf; --dark: #8a9a7b; --sel: #e8c547; --hint: rgba(35,33,29,.28);
+    --line: #d8d3c7; --accent: #2f5d50;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1d1a; --panel: #262723; --text: #ecebe6; --muted: #a09d94;
+      --light: #cfc8b4; --dark: #6f8062; --sel: #d4b43c; --hint: rgba(0,0,0,.35);
+      --line: #3a3b36; --accent: #8fc4b0;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font-family: "Segoe UI", system-ui, sans-serif; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 24px 16px; }
+  h1 { font-size: 1.4rem; margin: 0 0 16px; }
+  .layout { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; }
+  .boardArea { display: flex; gap: 10px; }
+  .bcol { display: flex; flex-direction: column; width: min(80vw, 480px); }
+  .navrow { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .navrow button { margin: 0; }
+  #moves { position: relative; }
+  #explain { display: none; margin-top: 8px; font-size: .9rem; line-height: 1.45; background: var(--bg);
+             border-left: 3px solid var(--accent); padding: 8px 10px; border-radius: 4px; }
+  #explain div { margin-bottom: 4px; }
+  .cand { display: flex; align-items: baseline; gap: 8px; margin: 4px 0; font-size: .92rem; }
+  .cand .sw { flex: none; width: 26px; border-radius: 3px; align-self: center; }
+  .cand .san { font-weight: 700; min-width: 48px; }
+  .cand .ev { min-width: 44px; }
+  .cand .pvt { color: var(--muted); font-size: .82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pname { height: 28px; display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: .95rem; }
+  .pname .dot { width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--muted); }
+  .pname .elo { color: var(--muted); font-weight: 400; }
+  .badge { position: absolute; top: 2px; right: 2px; width: 36%; max-width: 24px; aspect-ratio: 1; border-radius: 50%;
+           color: #fff; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center;
+           box-shadow: 0 1px 3px rgba(0,0,0,.45); z-index: 2; }
+  #evalbar { margin: 28px 0; width: 26px; height: min(80vw, 480px); background: #222; border-radius: 4px;
+             overflow: hidden; position: relative; border: 1px solid var(--line); }
+  #evalWhite { position: absolute; bottom: 0; left: 0; right: 0; background: #f4f4f0;
+               height: 50%; transition: height .4s; }
+  #evalText { position: absolute; left: 0; right: 0; font-size: 11px; text-align: center;
+              font-weight: 600; }
+  #board { position: relative; display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); grid-template-rows: repeat(8, minmax(0, 1fr));
+           width: min(80vw, 480px); height: min(80vw, 480px);
+           border: 1px solid var(--line); border-radius: 4px; overflow: hidden;
+           user-select: none; }
+  .sq { min-width: 0; min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; position: relative;
+        font-size: min(7.4vw, 44px); cursor: pointer; line-height: 1; }
+  .sq.l { background: var(--light); } .sq.d { background: var(--dark); }
+  .sq.sel { background: var(--sel); }
+  .sq.hint::after { content: ""; width: 28%; height: 28%; border-radius: 50%;
+                    background: var(--hint); position: absolute; }
+  .sq.hint.cap::after { width: 86%; height: 86%; background: none;
+                        border: 4px solid var(--hint); }
+  .sq.last { box-shadow: inset 0 0 0 3px var(--sel); }
+  .pw { color: #fff; text-shadow: 0 0 2px #000, 0 0 2px #000, 0 0 2px #000; }
+  .pb { color: #1a1a1a; }
+  .panel { flex: 1; min-width: 260px; background: var(--panel); border: 1px solid var(--line);
+           border-radius: 8px; padding: 16px; }
+  .panel h2 { font-size: 1rem; margin: 0 0 8px; }
+  .row { margin-bottom: 14px; }
+  .big { font-size: 1.8rem; font-weight: 700; color: var(--accent); }
+  .muted { color: var(--muted); font-size: .9rem; }
+  button { font: inherit; padding: 8px 12px; margin: 0 6px 6px 0; border-radius: 6px;
+           border: 1px solid var(--line); background: var(--bg); color: var(--text);
+           cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button:focus-visible, .sq:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  #moves { font-size: .95rem; line-height: 1.6; max-height: 140px; overflow-y: auto; }
+  textarea { width: 100%; font: inherit; font-size: .85rem; padding: 8px; margin-bottom: 6px;
+             border: 1px solid var(--line); border-radius: 6px; background: var(--bg);
+             color: var(--text); resize: vertical; }
+  .cur { background: var(--sel); color: #111; border-radius: 3px; padding: 0 3px; }
+  .mv { cursor: pointer; }
+  select { font: inherit; padding: 7px; margin: 0 6px 6px 0; border-radius: 6px;
+           border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+  .b1 { color: #b8860b; } .b2 { color: #d9731a; } .b3 { color: #c0392b; font-weight: 700; } .b4 { color: #2f8f5b; } .b5 { color: #1baca6; font-weight: 700; } .b6 { color: #5a9a2e; }
+  .pc { width: 90%; height: 90%; pointer-events: none; }
+  .cur.b1, .cur.b2, .cur.b3, .cur.b4, .cur.b5, .cur.b6 { color: #111; }
+  #summary table { border-collapse: collapse; font-size: .9rem; margin: 6px 0; }
+  #summary td, #summary th { padding: 3px 10px 3px 0; text-align: left; font-weight: 400; }
+  #summary th { color: var(--muted); }
+  #graph { width: 100%; height: 70px; background: var(--bg); border: 1px solid var(--line);
+           border-radius: 6px; cursor: pointer; }
+  #gameList button { display: block; width: 100%; text-align: left; margin: 0 0 4px; font-size: .85rem; }
+  #gameList { max-height: 190px; overflow-y: auto; }
+  #arrow { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  #status { font-size: .85rem; color: var(--muted); margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Schach-Analyse</h1>
+  <div class="layout">
+    <div class="boardArea">
+      <div id="evalbar" aria-label="Bewertungsbalken">
+        <div id="evalWhite"></div>
+        <div id="evalText" style="top:4px;color:#fff">0.0</div>
+      </div>
+      <div class="bcol">
+        <div class="pname" id="nameTop"></div>
+        <div id="board" role="grid" aria-label="Schachbrett"></div>
+        <div class="pname" id="nameBottom"></div>
+        <div class="navrow">
+          <button id="first" title="Zum Anfang">⏮</button>
+          <button id="prev" title="Ein Zug zurück (←)">◀</button>
+          <button id="next" title="Ein Zug vor (→)">▶</button>
+          <button id="last" title="Zum Ende">⏭</button>
+          <button id="flip">Brett drehen</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="row">
+        <h2>Bewertung</h2>
+        <div class="big" id="scoreBig">0.0</div>
+        <div class="muted" id="scoreInfo">Engine wird geladen …</div>
+      </div>
+      <div class="row">
+        <h2>Beste Züge</h2>
+        <div id="bestMove" class="big" style="font-size:1.3rem">–</div>
+        <div class="muted" id="pvLine"></div>
+        <div id="cands"></div>
+      </div>
+      <div class="row">
+        <h2>Züge</h2>
+        <div id="moves" class="muted">Noch keine Züge.</div>
+        <div id="moveNote" style="margin-top:6px;font-size:.9rem"></div>
+        <div id="opening" style="margin-top:6px;font-size:.9rem;font-weight:600"></div>
+        <div id="explain"></div>
+      </div>
+      <div class="row">
+        <h2>Partien holen</h2>
+        <select id="source"><option value="chesscom">chess.com</option><option value="lichess">Lichess</option></select>
+        <input id="user" placeholder="Benutzername" style="font:inherit;padding:7px;width:150px;margin:0 6px 6px 0;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--text)">
+        <button id="fetchGames">Letzte Partien laden</button>
+        <div id="gameList"></div>
+      </div>
+      <div class="row">
+        <h2>Partie laden (PGN)</h2>
+        <textarea id="pgn" rows="4" placeholder="PGN hier einfügen, z. B. von chess.com oder lichess.org"></textarea>
+        <button id="loadPgn">Partie laden</button>
+      </div>
+      <div class="row">
+        <h2>Partieanalyse</h2>
+        <select id="depth">
+          <option value="10">Schnell</option>
+          <option value="13" selected>Normal</option>
+          <option value="16">Gründlich</option>
+        </select>
+        <button id="analyzeAll">Partie analysieren</button>
+        <div class="muted" id="progress"></div>
+        <div id="summary"></div>
+        <svg id="graph" viewBox="0 0 300 70" preserveAspectRatio="none" style="display:none"></svg>
+      </div>
+      <div>
+        <button id="undo">Zug zurück</button>
+        <button id="reset">Neue Partie</button>
+      </div>
+      <div id="status"></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+<script>
+const game = new Chess();
+let flipped = false, selected = null, lastMove = null;
+let engine = null, engineReady = false, analysisId = 0;
+
+const PIECE_URL = "https://cdn.jsdelivr.net/gh/lichess-org/lila@master/public/piece/cburnett/";
+const GLYPH = { p:"♟", n:"♞", b:"♝", r:"♜", q:"♛", k:"♚" };
+const boardEl = document.getElementById("board");
+const statusEl = document.getElementById("status");
+
+/* ---------- Brett zeichnen ---------- */
+function render() {
+  boardEl.innerHTML = "";
+  const legal = selected ? game.moves({ square: selected, verbose: true }) : [];
+  for (let r = 0; r < 8; r++) {
+    for (let f = 0; f < 8; f++) {
+      const file = flipped ? 7 - f : f;
+      const rank = flipped ? r : 7 - r;
+      const name = "abcdefgh"[file] + (rank + 1);
+      const piece = game.get(name);
+      const el = document.createElement("div");
+      el.className = "sq " + ((file + rank) % 2 === 1 ? "l" : "d");
+      el.tabIndex = 0;
+      el.dataset.sq = name;
+      if (name === selected) el.classList.add("sel");
+      if (lastMove && (name === lastMove.from || name === lastMove.to)) el.classList.add("last");
+      const m = legal.find(x => x.to === name);
+      if (m) { el.classList.add("hint"); if (piece) el.classList.add("cap"); }
+      if (piece) {
+        const img = document.createElement("img");
+        img.className = "pc"; img.draggable = false; img.alt = piece.color + piece.type;
+        img.src = PIECE_URL + piece.color + piece.type.toUpperCase() + ".svg";
+        img.onerror = () => {   // Notlösung: Textsymbol, falls das Bild nicht lädt
+          const s = document.createElement("span");
+          s.className = piece.color === "w" ? "pw" : "pb";
+          s.textContent = GLYPH[piece.type];
+          img.replaceWith(s);
+        };
+        el.appendChild(img);
+      }
+      if (an && lastMove && cursor > 0 && name === lastMove.to && an.cls[cursor - 1]) {
+        const c = an.cls[cursor - 1], bd = document.createElement("span");
+        bd.className = "badge"; bd.textContent = ["", "?!", "?", "??", "★", "!!", "✓"][c];
+        bd.style.background = ["", "#d9a400", "#e8892b", "#d6372c", "#3c9d5d", "#1baca6", "#81b64c"][c];
+        el.appendChild(bd);
+      }
+      el.addEventListener("click", () => onSquare(name));
+      el.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSquare(name); } });
+      boardEl.appendChild(el);
+    }
+  }
+  renderMoves();
+  renderNames();
+  drawArrow();
+}
+
+function onSquare(name) {
+  if (game.game_over()) return;
+  if (selected) {
+    const legal = game.moves({ square: selected, verbose: true });
+    const m = legal.find(x => x.to === name);
+    if (m) {
+      const made = game.move({ from: selected, to: name, promotion: "q" });
+      lastMove = made; selected = null;
+      syncLine(); render(); analyze(); return;
+    }
+  }
+  const p = game.get(name);
+  selected = (p && p.color === game.turn()) ? name : null;
+  render();
+}
+
+let cands = null;
+let players = { w: "Weiß", b: "Schwarz" };
+let line = [], cursor = 0, an = null, batch = { running: false };
+let onReady = null, searching = false, buf = null;
+let lastMsg = Date.now(), waiting = false, restarts = 0;
+const cache = {}, tried = {};   // cache: fen -> { depth, lines, src, final }; tried: schon vorausgerechnete Stellungen
+let engineLabel = "Stockfish 10", pendingEngine = null, cloudCtl = null, cloudBlockedUntil = 0, upgradeStarted = false;
+const MIN_DEPTH = 8;   // flachere Zwischenergebnisse werden nicht als Pfeile gezeigt   // line = alle Züge der Partie, cursor = aktuelle Stellung
+
+function renderMoves() {
+  const el = document.getElementById("moves");
+  if (!line.length) { el.textContent = "Noch keine Züge."; return; }
+  el.innerHTML = "";
+  line.forEach((m, i) => {
+    if (i % 2 === 0) el.append((i / 2 + 1) + ". ");
+    const s = document.createElement("span");
+    const c = an ? an.cls[i] : 0;
+    s.className = "mv" + (i + 1 === cursor ? " cur" : "") + (c ? " b" + c : "");
+    s.textContent = m.san + (c ? ["", "?!", "?", "??", "★", "!!", "✓"][c] : "");
+    s.onclick = () => goTo(i + 1);
+    el.append(s, " ");
+  });
+  const cu = el.querySelector(".cur");
+  if (cu) {   // nur innerhalb der Zugliste scrollen, nie die ganze Seite
+    const top = cu.offsetTop, h = el.clientHeight;
+    if (top < el.scrollTop || top > el.scrollTop + h - 28) el.scrollTop = Math.max(0, top - h / 2);
+  }
+  showOpening();
+  showExplain(cursor - 1);
+  const note = document.getElementById("moveNote");
+  const k = cursor - 1;
+  note.textContent = (an && k >= 0 && an.cls[k] > 0 && an.cls[k] < 4 && an.bestSan[k]) ? "Besser wäre: " + an.bestSan[k] : "";
+}
+
+/* ---------- Eröffnungen ---------- */
+const OPEN_W = {
+"e4":"Königsbauer-Eröffnung","d4":"Damenbauer-Eröffnung","c4":"Englische Eröffnung","Nf3":"Réti-Eröffnung","f4":"Bird-Eröffnung",
+"b3":"Larsen-Eröffnung","g3":"Königsflügel-Eröffnung","e4 e5 Nf3":"Königsspringer-Spiel","e4 e5 Nf3 Nc6 Bb5":"Spanische Partie",
+"e4 e5 Nf3 Nc6 Bc4":"Italienische Partie","e4 e5 Nf3 Nc6 d4":"Schottische Partie","e4 e5 f4":"Königsgambit","e4 e5 Nc3":"Wiener Partie",
+"e4 e5 Bc4":"Läuferspiel","e4 c5 Nc3":"Geschlossene Sizilianisch-Variante","e4 c5 c3":"Alapin-Variante","e4 e6 d4 d5 Nc3":"Klassische Variante",
+"e4 e6 d4 d5 e5":"Vorstoßvariante","d4 d5 c4":"Damengambit","d4 d5 Bf4":"London-System","d4 d5 Nf3 Nf6 Bf4":"London-System",
+"d4 Nf6 Bf4":"London-System","d4 Nf6 Bg5":"Trompowsky-Angriff"};
+const OPEN_B = {
+"e4 c5":"Sizilianische Verteidigung","e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6":"Sizilianisch, Najdorf-Variante",
+"e4 c5 Nf3 Nc6 d4 cxd4 Nxd4 g6":"Sizilianisch, Drachenvariante","e4 e6":"Französische Verteidigung","e4 c6":"Caro-Kann-Verteidigung",
+"e4 d5":"Skandinavische Verteidigung","e4 g6":"Moderne Verteidigung","e4 d6":"Philidor-/Pirc-Verteidigung","e4 Nf6":"Aljechin-Verteidigung",
+"e4 e5":"Offenes Spiel","e4 e5 Nf3 Nc6":"Doppelter Königsspringer","e4 e5 Nf3 Nf6":"Russische Verteidigung",
+"e4 e5 Nf3 Nc6 Bb5 a6":"Morphy-Verteidigung","e4 e5 Nf3 Nc6 Bc4 Bc5":"Giuoco Piano","e4 e5 Nf3 Nc6 Bc4 Nf6":"Zweispringerspiel im Nachzuge",
+"d4 d5":"Damenbauernspiel","d4 d5 c4 e6":"Damengambit, abgelehnt","d4 d5 c4 dxc4":"Damengambit, angenommen","d4 d5 c4 c6":"Slawische Verteidigung",
+"d4 Nf6":"Indische Verteidigung","d4 Nf6 c4 g6":"Königsindische Verteidigung","d4 Nf6 c4 e6 Nc3 Bb4":"Nimzo-Indische Verteidigung",
+"d4 Nf6 c4 e6 Nf3 b6":"Damenindische Verteidigung","d4 f5":"Holländische Verteidigung"};
+
+function showOpening() {
+  const el = document.getElementById("opening");
+  const sans = line.slice(0, cursor).map(m => m.san);
+  const find = tbl => {
+    for (let n = Math.min(sans.length, 12); n >= 1; n--) {
+      const name = tbl[sans.slice(0, n).join(" ")];
+      if (name) return name;
+    }
+    return "";
+  };
+  const w = find(OPEN_W), b = find(OPEN_B);
+  el.innerHTML = "";
+  for (const [label, name] of [["Weiß", w], ["Schwarz", b]]) {
+    if (!name) continue;
+    const d = document.createElement("div");
+    d.textContent = label + ": " + name;
+    el.appendChild(d);
+  }
+}
+
+function renderNames() {
+  const fill = (id, color) => {
+    const el = document.getElementById(id), name = players[color], elo = players[color + "Elo"];
+    el.innerHTML = "";
+    const dot = document.createElement("span"); dot.className = "dot";
+    dot.style.background = color === "w" ? "#fff" : "#222";
+    const nm = document.createElement("span"); nm.textContent = name;
+    el.append(dot, nm);
+    if (elo && elo !== "?") { const e = document.createElement("span"); e.className = "elo"; e.textContent = "(" + elo + ")"; el.appendChild(e); }
+  };
+  fill("nameTop", flipped ? "w" : "b");
+  fill("nameBottom", flipped ? "b" : "w");
+}
+function setPlayers(g) {
+  const h = g.header();
+  players = { w: h.White || "Weiß", b: h.Black || "Schwarz", wElo: h.WhiteElo, bElo: h.BlackElo };
+}
+
+/* ---------- Erklärungen zu den Zügen (regelbasiert, ohne KI) ---------- */
+const VAL = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
+const ACC = { p: "deinen Bauern", n: "deinen Springer", b: "deinen Läufer", r: "deinen Turm", q: "deine Dame" };
+const NOM = { p: "einen Bauern", n: "einen Springer", b: "einen Läufer", r: "einen Turm", q: "die Dame" };
+const matOf = (g, side) => { let t = 0; for (const r of g.board()) for (const q of r) if (q) t += (q.color === side ? 1 : -1) * VAL[q.type]; return t; };
+const evText = cp => Math.abs(cp) >= 9000 ? (cp > 0 ? "Matt für dich" : "Matt gegen dich") : (cp > 0 ? "+" : "") + (cp / 100).toFixed(1);
+const mateIn = cp => Math.max(1, 10000 - Math.abs(cp));
+const uciOf = m => ({ from: m.slice(0, 2), to: m.slice(2, 4), promotion: m[4] });
+
+function moveTraits(fen, uci) {
+  const g = new Chess(fen), m = g.move(uciOf(uci));
+  if (!m) return [];
+  const t = [];
+  if (m.san.includes("#")) t.push("setzt den Gegner matt");
+  else if (m.san.includes("+")) t.push("gibt Schach");
+  if (m.captured) t.push("schlägt " + NOM[m.captured]);
+  if (m.promotion) t.push("verwandelt den Bauern in eine Dame");
+  if (m.flags.includes("k") || m.flags.includes("q")) t.push("bringt den König durch Rochade in Sicherheit");
+  if (!m.captured && (m.piece === "n" || m.piece === "b") && /[18]/.test(m.from[1])) t.push("entwickelt eine Figur");
+  if (m.piece === "p" && ["d4", "e4", "d5", "e5"].includes(m.to)) t.push("besetzt das Zentrum");
+  return t;
+}
+
+function showExplain(k) {
+  const el = document.getElementById("explain");
+  el.innerHTML = ""; el.style.display = "none";
+  if (!an || k < 0 || k >= line.length) return;
+  const side = k % 2 === 0 ? "w" : "b", c = an.cls[k], sg = side === "w" ? 1 : -1;
+  const e0 = sg * an.evals[k], e1 = sg * an.evals[k + 1];
+  const mv = line[k], played = mv.from + mv.to + (mv.promotion || "");
+  const out = [];
+  const traits = moveTraits(an.fens[k], played);
+
+  if (c >= 1 && c <= 3) {
+    out.push(c === 3 ? "Das war ein grober Patzer." : c === 2 ? "Das war ein Fehler." : "Das war etwas ungenau.");
+    out.push("Deine Bewertung fiel von " + evText(e0) + " auf " + evText(e1) + ".");
+    if (e0 >= 9000 && e1 < 9000) out.push("Du hattest ein Matt in " + mateIn(e0) + " und hast es verpasst.");
+    else if (e1 <= -9000) out.push("Dein Zug erlaubt dem Gegner ein Matt in " + mateIn(e1) + ".");
+    const reply = an.bests[k + 1];
+    if (reply) {
+      const g = new Chess(an.fens[k + 1]), base = matOf(new Chess(an.fens[k]), side);
+      const r = g.move(uciOf(reply));
+      if (r) {
+        let txt = "Der Gegner kann jetzt mit " + r.san;
+        if (r.captured) txt += " " + ACC[r.captured] + " schlagen";
+        else txt += " antworten";
+        if (r.san.includes("#")) txt += " und dich matt setzen";
+        else if (r.san.includes("+")) txt += " und dabei Schach geben";
+        out.push(txt + ".");
+        let lvl = matOf(g, side);
+        for (const x of g.moves({ verbose: true })) {
+          if (!/[ce]/.test(x.flags)) continue;
+          g.move(x); lvl = Math.max(lvl, matOf(g, side)); g.undo();
+        }
+        if (lvl - base <= -2) out.push("Nach dem Abtausch stehst du etwa " + Math.abs(lvl - base) + " Materialpunkte schlechter da.");
+      }
+    }
+    if (an.bestSan[k]) {
+      const bt = moveTraits(an.fens[k], an.bests[k]);
+      out.push("Besser war " + an.bestSan[k] + (bt.length ? ": Der Zug " + bt.join(" und ") + "." : "."));
+    }
+  } else if (c === 5) {
+    out.push("Ein brillanter Zug: Du gibst bewusst Material her, und die Engine bewertet die Stellung danach trotzdem mit " + evText(e1) + ".");
+    if (traits.length) out.push("Der Zug " + traits.join(" und ") + ".");
+  } else if (c === 4) {
+    out.push("Das war der beste Zug der Engine.");
+    if (traits.length) out.push("Er " + traits.join(" und ") + ".");
+    if (e1 >= 9000) out.push("Er führt zu einem Matt in " + mateIn(e1) + ".");
+    else out.push("Die Bewertung für dich: " + evText(e1) + ".");
+  } else if (c === 6) {
+    out.push("Ein solider Zug. Die Bewertung für dich: " + evText(e1) + ".");
+    if (traits.length) out.push("Der Zug " + traits.join(" und ") + ".");
+    if (an.bestSan[k]) out.push("Die Engine hätte " + an.bestSan[k] + " bevorzugt, der Unterschied ist aber klein.");
+  }
+  if (!out.length) return;
+  const h = document.createElement("div"); h.style.fontWeight = "700"; h.textContent = "Warum?"; el.appendChild(h);
+  out.forEach(t => { const d = document.createElement("div"); d.textContent = t; el.appendChild(d); });
+  el.style.display = "block";
+}
+
+function syncLine() { an = null; line = game.history({ verbose: true }); cursor = line.length; }
+
+function goTo(n) {
+  n = Math.max(0, Math.min(line.length, n));
+  game.reset();
+  for (let i = 0; i < n; i++) game.move({ from: line[i].from, to: line[i].to, promotion: line[i].promotion });
+  cursor = n; lastMove = n ? line[n - 1] : null; selected = null;
+  render(); analyze();
+}
+
+/* ---------- Engine (Stockfish im Browser) ---------- */
+const ENGINE_URLS = [
+  "https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.2/stockfish.js",
+  "https://cdn.jsdelivr.net/npm/stockfish.js@10.0.2/stockfish.js"
+];
+
+function startEngine(i = 0) {
+  if (i >= ENGINE_URLS.length) {
+    document.getElementById("scoreInfo").textContent =
+      "Engine konnte nicht geladen werden. Bist du online?";
+    return;
+  }
+  try {
+    const blob = new Blob(['importScripts("' + ENGINE_URLS[i] + '");'], { type: "application/javascript" });
+    const w = new Worker(URL.createObjectURL(blob));
+    let ok = false;
+    w.onerror = () => { if (!ok) { w.terminate(); startEngine(i + 1); } };
+    w.onmessage = e => {
+      const line = typeof e.data === "string" ? e.data : "";
+      lastMsg = Date.now();
+      if (line === "uciok") { w.postMessage("isready"); }
+      if (line === "readyok" && !ok) {
+        ok = true; engine = w; engineReady = true;
+        w.postMessage("setoption name MultiPV value 3"); analyze();
+        if (!upgradeStarted) { upgradeStarted = true; upgradeEngine(); }
+      }
+      if (ok) handleEngine(line);
+    };
+    w.postMessage("uci");
+  } catch (err) { startEngine(i + 1); }
+}
+
+function analyze() {
+  if (!engineReady || batch.running) return;
+  if (pendingEngine) doSwap();
+  const fen = game.fen();
+  searching = false; buf = null; cands = null; onReady = null;
+  engine.postMessage("stop");
+  drawArrow();   // alte Pfeile und Liste entfernen
+  if (game.game_over()) { waiting = false; showResult(); return; }
+  const hit = cache[fen];
+  if (hit) showCands(fen);                      // gemerkte Ergebnisse sofort zeigen
+  if (hit && hit.final) {                       // schon fertig berechnet: nur noch vorausrechnen
+    waiting = false; onReady = prefetchNext; engine.postMessage("isready"); return;
+  }
+  waiting = true; lastMsg = Date.now();
+  if (!hit) {
+    document.getElementById("scoreInfo").textContent = "Analysiere …";
+    document.getElementById("bestMove").textContent = "…";
+  }
+  // Erst wenn die Engine "readyok" meldet, ist die alte Suche sicher beendet.
+  onReady = () => {
+    if (batch.running || fen !== game.fen() || (cache[fen] && cache[fen].final)) return;
+    engine._fen = fen;
+    engine._n = new Chess(fen).moves().length;
+    searching = true; waiting = true; lastMsg = Date.now();
+    engine.postMessage("position fen " + fen);
+    engine.postMessage("go depth 18 movetime 5000");   // endet spätestens nach 5 Sekunden
+  };
+  engine.postMessage("isready");
+  cloudLookup(fen);
+}
+
+// Lichess-Cloud: fertig berechnete Stellungen (vor allem Eröffnungen) kommen sofort.
+async function cloudLookup(fen) {
+  if (Date.now() < cloudBlockedUntil || game.history().length > 40) return;
+  if (cloudCtl) cloudCtl.abort();
+  cloudCtl = new AbortController();
+  try {
+    const r = await fetch("https://lichess.org/api/cloud-eval?multiPv=3&fen=" + encodeURIComponent(fen), { signal: cloudCtl.signal });
+    if (r.status === 429) { cloudBlockedUntil = Date.now() + 60000; return; }
+    if (!r.ok) return;
+    const d = await r.json();
+    if (fen !== game.fen() || !d.pvs || !d.pvs.length) return;
+    const lines = {};
+    d.pvs.slice(0, 3).forEach((p, i) => {
+      const ucis = p.moves.split(" "), t = new Chess(fen), san = [];
+      for (const u of ucis.slice(0, 6)) { const m = t.move(uciOf(u)); if (!m) break; san.push(m.san); }
+      let text, pct;
+      if (p.mate !== undefined) { text = (p.mate > 0 ? "+" : "-") + "M" + Math.abs(p.mate); pct = p.mate > 0 ? 100 : 0; }
+      else { text = (p.cp > 0 ? "+" : "") + (p.cp / 100).toFixed(1); pct = 50 + 50 * (2 / (1 + Math.exp(-0.004 * p.cp)) - 1); }
+      if (san.length) lines[i + 1] = { text, pct, san, uci: ucis[0] };
+    });
+    if (!lines[1]) return;
+    cache[fen] = { depth: d.depth, lines, src: "Lichess-Cloud", final: true };
+    showCands(fen);
+    if (engine) {   // eigene Suche wird nicht mehr gebraucht
+      searching = false; waiting = false; buf = null; onReady = prefetchNext;
+      engine.postMessage("stop"); engine.postMessage("isready");
+    }
+  } catch (e) {}
+}
+
+// Rechnet die nächsten Züge der geladenen Partie schon im Voraus (nur wenn die Engine Pause hat).
+function prefetchNext() {
+  if (batch.running || !engineReady || !engine) return;
+  const g = new Chess(game.fen());
+  for (let k = 0; k < 3; k++) {
+    const m = line[cursor + k];
+    if (!m) return;
+    g.move({ from: m.from, to: m.to, promotion: m.promotion });
+    const f = g.fen();
+    if (g.game_over()) return;
+    if ((cache[f] && cache[f].final) || tried[f]) continue;
+    tried[f] = true;
+    engine._fen = f; engine._n = g.moves().length;
+    buf = null; searching = true; waiting = true; lastMsg = Date.now();
+    engine.postMessage("position fen " + f);
+    engine.postMessage("go depth 16 movetime 2500");
+    return;
+  }
+}
+
+// Versucht im Hintergrund, eine neuere Stockfish-Version zu laden. Klappt das nicht, läuft alles wie bisher.
+function upgradeEngine() {
+  (async () => {
+    for (const v of ["17.1.0", "17.0.0"]) {
+      try {
+        const r = await fetch("https://data.jsdelivr.com/v1/packages/npm/stockfish@" + v + "?structure=flat");
+        if (!r.ok) continue;
+        const names = (await r.json()).files.map(f => f.name);
+        const js = names.find(n => /lite-single.*\.js$/.test(n));
+        if (!js) continue;
+        const base = "https://cdn.jsdelivr.net/npm/stockfish@" + v, wasm = base + js.replace(/\.js$/, ".wasm");
+        for (const hash of [wasm, encodeURIComponent(wasm)]) if (await bootCandidate(base + js, hash)) return;
+      } catch (e) {}
+    }
+  })();
+}
+function bootCandidate(js, hash) {
+  return new Promise(res => {
+    let w, done = false, t;
+    const fin = ok => { if (done) return; done = true; clearTimeout(t); if (!ok && w) { try { w.terminate(); } catch (e) {} } res(ok); };
+    t = setTimeout(() => fin(false), 25000);
+    try {
+      const blob = new Blob(['importScripts("' + js + '");'], { type: "application/javascript" });
+      w = new Worker(URL.createObjectURL(blob) + "#" + hash);
+    } catch (e) { return fin(false); }
+    w.onerror = () => fin(false);
+    w.onmessage = e => {
+      const l = typeof e.data === "string" ? e.data : "";
+      if (!done) {
+        if (l === "uciok") w.postMessage("isready");
+        if (l === "readyok") { w.postMessage("setoption name MultiPV value 3"); pendingEngine = w; fin(true); if (!batch.running) analyze(); }
+        return;
+      }
+      if (w === engine) { lastMsg = Date.now(); handleEngine(l); }
+    };
+    w.postMessage("uci");
+  });
+}
+function doSwap() {
+  const w = pendingEngine; pendingEngine = null;
+  try { engine.terminate(); } catch (e) {}
+  engine = w; engineLabel = "Stockfish 17";
+  onReady = null; searching = false; waiting = false; buf = null;
+}
+
+function handleEngine(line) {
+  if (line === "readyok") { const f = onReady; onReady = null; if (f) f(); return; }
+  if (line.startsWith("bestmove")) {
+    if (batch.running) {
+      if (batch.searching) { batch.searching = false; waiting = false; batchResult(line.split(" ")[1]); }
+      return;
+    }
+    if (searching && (buf || engine._n === 1)) {   // ohne bisherige Info-Zeile wäre es eine verspätete Meldung der alten Suche
+      waiting = false;
+      if (buf && !buf.done && buf.lines[1] && (buf.depth >= MIN_DEPTH || engine._fen === game.fen())) commitCands(engine._fen, buf);
+      if (cache[engine._fen]) cache[engine._fen].final = true;
+      prefetchNext();
+    }
+    return;
+  }
+  if (batch.running) { batchInfo(line); return; }
+  if (!searching || !line.startsWith("info") || !line.includes(" score ") || !line.includes(" pv ")) return;
+  if (/ (lowerbound|upperbound)/.test(line)) return;
+  const fen = engine._fen;
+  if (!fen) return;
+  const mp = parseInt((line.match(/ multipv (\d+)/) || [0, 1])[1]);
+  const depth = parseInt((line.match(/ depth (\d+)/) || [0, 0])[1]);
+  const cp = line.match(/ score cp (-?\d+)/), mate = line.match(/ score mate (-?\d+)/);
+  const pv = line.split(" pv ")[1].trim().split(" ");
+  const white = fen.split(" ")[1] === "w";
+  let text, pct;
+  if (mate) {
+    let m = parseInt(mate[1]); if (!white) m = -m;
+    text = (m > 0 ? "+" : "-") + "M" + Math.abs(m);
+    pct = m > 0 ? 100 : 0;
+  } else if (cp) {
+    let v = parseInt(cp[1]); if (!white) v = -v;
+    text = (v > 0 ? "+" : "") + (v / 100).toFixed(1);
+    pct = 50 + 50 * (2 / (1 + Math.exp(-0.004 * v)) - 1);
+  } else return;
+  const tmp = new Chess(fen), san = [];
+  for (const u of pv.slice(0, 6)) {
+    const mv = tmp.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] });
+    if (!mv) break; san.push(mv.san);
+  }
+  if (!san.length) return;
+  // Alle Linien einer Tiefe sammeln und erst gemeinsam anzeigen, damit nie zwei Pfeile denselben Zug zeigen.
+  if (buf && buf.depth !== depth && !buf.done && buf.lines[1] && buf.depth >= MIN_DEPTH) commitCands(fen, buf);
+  if (!buf || buf.depth !== depth) buf = { depth, lines: {}, done: false };
+  buf.lines[mp] = { text, pct, san, uci: pv[0] };
+  if (depth < MIN_DEPTH) {
+    if (fen === game.fen() && !cache[fen]) document.getElementById("scoreInfo").textContent = "Analysiere … (Tiefe " + depth + ")";
+    return;
+  }
+  if (!buf.done && Object.keys(buf.lines).length >= Math.min(3, engine._n || 3)) commitCands(fen, buf);
+}
+
+function restartEngine() {
+  restarts++;
+  try { if (engine) engine.terminate(); } catch (e) {}
+  engine = null; engineReady = false; onReady = null; searching = false; buf = null; cands = null; waiting = false; engineLabel = "Stockfish 10";
+  drawArrow();
+  if (batch.running) {
+    batch = { running: false };
+    document.getElementById("analyzeAll").textContent = "Partie analysieren";
+    document.getElementById("progress").textContent = "Analyse abgebrochen: Die Engine hat nicht geantwortet. Bitte noch einmal starten.";
+  }
+  if (restarts > 3) {
+    document.getElementById("scoreInfo").textContent = "Die Engine antwortet nicht. Lade die Seite neu (Strg + F5).";
+    return;
+  }
+  document.getElementById("scoreInfo").textContent = "Engine wird neu gestartet …";
+  startEngine(0);
+}
+// Hängt die Engine (keine Antwort mehr), wird sie automatisch neu gestartet.
+setInterval(() => {
+  if (!engineReady || !waiting) return;
+  if (Date.now() - lastMsg > (batch.running ? 45000 : 20000)) restartEngine();
+}, 3000);
+
+function commitCands(fen, b) {
+  b.done = true;
+  cache[fen] = { depth: b.depth, lines: b.lines, src: engineLabel, final: false };
+  if (fen === game.fen()) showCands(fen);   // sonst war es nur eine Vorausberechnung: nur merken
+}
+
+function showCands(fen) {
+  const c = cache[fen];
+  if (!c) return;
+  cands = { fen, lines: c.lines };
+  const L = c.lines[1];
+  if (!L) return;
+  document.getElementById("scoreBig").textContent = L.text;
+  const et = document.getElementById("evalText");
+  et.textContent = L.text;
+  et.style.color = L.pct > 50 ? "#111" : "#fff";
+  et.style.top = L.pct > 50 ? "auto" : "4px";
+  et.style.bottom = L.pct > 50 ? "4px" : "auto";
+  document.getElementById("evalWhite").style.height = L.pct + "%";
+  document.getElementById("scoreInfo").textContent = "Tiefe " + c.depth + " · " + c.src;
+  document.getElementById("bestMove").textContent = L.san[0] || "–";
+  document.getElementById("pvLine").textContent = "";
+  drawArrow();
+}
+
+const ARROW_STYLE = [{ c: "#e0a800", w: .22 }, { c: "#3b82d6", w: .15 }, { c: "#8b919a", w: .10 }];
+
+function renderCands() {
+  const el = document.getElementById("cands");
+  el.innerHTML = "";
+  if (!cands || cands.fen !== game.fen()) return;
+  [1, 2, 3].forEach(i => {
+    const L = cands.lines[i];
+    if (!L) return;
+    const row = document.createElement("div"); row.className = "cand";
+    const sw = document.createElement("span"); sw.className = "sw";
+    sw.style.background = ARROW_STYLE[i - 1].c; sw.style.height = Math.round(ARROW_STYLE[i - 1].w * 32) + "px";
+    const sn = document.createElement("span"); sn.className = "san"; sn.textContent = L.san[0] || "–";
+    const ev = document.createElement("span"); ev.className = "ev"; ev.textContent = L.text;
+    const pv = document.createElement("span"); pv.className = "pvt"; pv.textContent = L.san.slice(1, 5).join(" ");
+    row.append(sw, sn, ev, pv);
+    el.appendChild(row);
+  });
+}
+
+function showResult() {
+  let msg = "Remis.";
+  if (game.in_checkmate()) msg = "Schachmatt – " + (game.turn() === "w" ? "Schwarz" : "Weiß") + " gewinnt.";
+  document.getElementById("scoreInfo").textContent = msg;
+  document.getElementById("bestMove").textContent = "–";
+  document.getElementById("pvLine").textContent = "";
+  cands = null; document.getElementById("cands").innerHTML = "";
+}
+
+/* ---------- Knöpfe ---------- */
+document.getElementById("undo").onclick = () => {
+  game.undo(); syncLine(); goTo(cursor);
+};
+document.getElementById("reset").onclick = () => {
+  line = []; an = null; players = { w: "Weiß", b: "Schwarz" }; clearSummary(); goTo(0);
+};
+document.getElementById("first").onclick = () => goTo(0);
+document.getElementById("prev").onclick = () => goTo(cursor - 1);
+document.getElementById("next").onclick = () => goTo(cursor + 1);
+document.getElementById("last").onclick = () => goTo(line.length);
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "TEXTAREA") return;
+  if (e.key === "ArrowLeft") goTo(cursor - 1);
+  if (e.key === "ArrowRight") goTo(cursor + 1);
+});
+document.getElementById("loadPgn").onclick = () => {
+  const text = document.getElementById("pgn").value.trim();
+  const g = new Chess();
+  if (!text || !g.load_pgn(text)) {
+    statusEl.textContent = "Das PGN konnte nicht gelesen werden. Prüfe, ob du alles kopiert hast.";
+    return;
+  }
+  statusEl.textContent = "";
+  line = g.history({ verbose: true }); an = null; setPlayers(g);
+  clearSummary(); goTo(0);
+};
+document.getElementById("flip").onclick = () => { flipped = !flipped; render(); };
+
+/* ---------- Ganze Partie analysieren ---------- */
+const winPct = cp => 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * cp)) - 1);
+
+function clearSummary() {
+  document.getElementById("summary").innerHTML = "";
+  document.getElementById("graph").style.display = "none";
+  document.getElementById("progress").textContent = "";
+}
+
+function startAnalysis() {
+  if (batch.running) { batch.cancel = true; engine.postMessage("stop"); return; }
+  if (!engineReady) { statusEl.textContent = "Die Engine ist noch nicht bereit."; return; }
+  if (!line.length) { statusEl.textContent = "Lade zuerst eine Partie oder spiele ein paar Züge."; return; }
+  statusEl.textContent = "";
+  const t = new Chess(), fens = [t.fen()];
+  line.forEach(m => { t.move({ from: m.from, to: m.to, promotion: m.promotion }); fens.push(t.fen()); });
+  batch = { running: true, i: 0, fens, evals: [], bests: [], last: null,
+            depth: parseInt(document.getElementById("depth").value), cancel: false, searching: false };
+  batch.cap = { 10: 1500, 13: 3000, 16: 8000 }[batch.depth] || 5000;
+  waiting = true; lastMsg = Date.now();
+  document.getElementById("analyzeAll").textContent = "Abbrechen";
+  searching = false; buf = null; cands = null; drawArrow();
+  engine.postMessage("stop");
+  engine.postMessage("setoption name MultiPV value 1");
+  onReady = () => runNext();
+  engine.postMessage("isready");
+}
+
+function runNext() {
+  if (batch.cancel) return endBatch(false);
+  while (batch.i < batch.fens.length) {
+    const g = new Chess(batch.fens[batch.i]);
+    if (!g.game_over()) break;
+    batch.evals[batch.i] = g.in_checkmate() ? (g.turn() === "w" ? -10000 : 10000) : 0;
+    batch.bests[batch.i] = null; batch.i++;
+  }
+  if (batch.i >= batch.fens.length) return endBatch(true);
+  document.getElementById("progress").textContent =
+    "Analysiere Stellung " + (batch.i + 1) + " von " + batch.fens.length + " …";
+  batch.last = null; batch.searching = true; waiting = true; lastMsg = Date.now();
+  engine.postMessage("position fen " + batch.fens[batch.i]);
+  engine.postMessage("go depth " + batch.depth + " movetime " + batch.cap);
+}
+
+function batchInfo(l) {
+  if (!batch.searching || !l.startsWith("info") || !l.includes(" score ") || / (lowerbound|upperbound)/.test(l)) return;
+  const cp = l.match(/ score cp (-?\d+)/), mate = l.match(/ score mate (-?\d+)/);
+  let v;
+  if (cp) v = parseInt(cp[1]);
+  else if (mate) { const m = parseInt(mate[1]); v = (m > 0 ? 1 : -1) * (10000 - Math.abs(m)); }
+  else return;
+  if (batch.fens[batch.i].split(" ")[1] === "b") v = -v;
+  batch.last = v;
+}
+
+function batchResult(uci) {
+  batch.evals[batch.i] = batch.last === null ? 0 : batch.last;
+  batch.bests[batch.i] = uci && uci !== "(none)" ? uci : null;
+  batch.i++;
+  runNext();
+}
+
+// Opfer-Erkennung: Verliert die Seite nach dem Zug (und allen Schlagabtäuschen) mind. 3 Materialpunkte?
+function isSacrifice(fen, mv, side) {
+  const V = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
+  const md = g => { let t = 0; for (const r of g.board()) for (const q of r) if (q) t += (q.color === side ? 1 : -1) * V[q.type]; return t; };
+  const g = new Chess(fen), base = md(g);
+  g.move({ from: mv.from, to: mv.to, promotion: mv.promotion });
+  let worst = Infinity;
+  for (const o of g.moves({ verbose: true })) {
+    if (!/[ce]/.test(o.flags)) continue;
+    g.move(o);
+    let level = md(g);
+    for (const r of g.moves({ verbose: true })) {
+      if (!/[ce]/.test(r.flags)) continue;
+      g.move(r); level = Math.max(level, md(g)); g.undo();
+    }
+    g.undo();
+    worst = Math.min(worst, level);
+  }
+  return worst <= base - 3;
+}
+
+function endBatch(done) {
+  const b = batch;
+  batch = { running: false };
+  document.getElementById("analyzeAll").textContent = "Partie analysieren";
+  engine.postMessage("setoption name MultiPV value 3");
+  if (!done) { document.getElementById("progress").textContent = "Analyse abgebrochen."; analyze(); return; }
+  document.getElementById("progress").textContent = "";
+  const n = line.length;
+  const cls = [], accs = { w: [], b: [] }, cnt = { w: [0, 0, 0, 0, 0, 0], b: [0, 0, 0, 0, 0, 0] }, bestSan = [];
+  for (let i = 0; i < n; i++) {
+    const side = i % 2 === 0 ? "w" : "b";
+    const before = winPct(b.evals[i]), after = winPct(b.evals[i + 1]);
+    const loss = Math.max(0, side === "w" ? before - after : after - before);
+    const acc = Math.min(100, Math.max(0, 103.1668 * Math.exp(-0.04354 * loss) - 3.1669));
+    accs[side].push(acc);
+    const played = line[i].from + line[i].to + (line[i].promotion || "");
+    let c = 0;
+    if (played !== b.bests[i]) c = loss >= 30 ? 3 : loss >= 20 ? 2 : loss >= 10 ? 1 : 0;
+    else c = 4;
+    const mb = side === "w" ? before : 100 - before, ma = side === "w" ? after : 100 - after;
+    if ((c === 4 || loss < 2) && mb < 80 && ma >= 45 && isSacrifice(b.fens[i], line[i], side)) c = 5;
+    if (c === 0) c = 6;   // normaler/guter Zug
+    cls.push(c);
+    if (c) cnt[side][c - 1]++;
+    bestSan[i] = null;
+    if (b.bests[i]) {
+      const t = new Chess(b.fens[i]);
+      const mv = t.move({ from: b.bests[i].slice(0, 2), to: b.bests[i].slice(2, 4), promotion: b.bests[i][4] });
+      if (mv) bestSan[i] = mv.san;
+    }
+  }
+  const avg = a => a.length ? Math.round(a.reduce((x, y) => x + y, 0) / a.length * 10) / 10 : "–";
+  an = { evals: b.evals, cls, bestSan, bests: b.bests, fens: b.fens };
+  document.getElementById("summary").innerHTML =
+    "<table><tr><th></th><th>Weiß</th><th>Schwarz</th></tr>" +
+    "<tr><td>Genauigkeit</td><td><b>" + avg(accs.w) + " %</b></td><td><b>" + avg(accs.b) + " %</b></td></tr>" +
+    "<tr><td>Brillante Züge !!</td><td>" + cnt.w[4] + "</td><td>" + cnt.b[4] + "</td></tr>" +
+    "<tr><td>Gute Züge ✓</td><td>" + cnt.w[5] + "</td><td>" + cnt.b[5] + "</td></tr>" +
+    "<tr><td>Beste Züge ★</td><td>" + cnt.w[3] + "</td><td>" + cnt.b[3] + "</td></tr>" +
+    "<tr><td>Ungenauigkeiten</td><td>" + cnt.w[0] + "</td><td>" + cnt.b[0] + "</td></tr>" +
+    "<tr><td>Fehler</td><td>" + cnt.w[1] + "</td><td>" + cnt.b[1] + "</td></tr>" +
+    "<tr><td>Patzer</td><td>" + cnt.w[2] + "</td><td>" + cnt.b[2] + "</td></tr></table>";
+  drawGraph();
+  render(); analyze();
+}
+
+function drawGraph() {
+  const g = document.getElementById("graph"), ev = an.evals, n = ev.length - 1;
+  const pts = ev.map((cp, i) => (n ? i / n * 300 : 0).toFixed(1) + "," + (70 - winPct(cp) / 100 * 70).toFixed(1));
+  g.innerHTML = '<line x1="0" y1="35" x2="300" y2="35" stroke="currentColor" opacity=".3"/>' +
+    '<polyline fill="none" stroke="#2f5d50" stroke-width="2" vector-effect="non-scaling-stroke" points="' + pts.join(" ") + '"/>';
+  g.style.display = "block";
+  g.onclick = e => {
+    const r = g.getBoundingClientRect();
+    goTo(Math.round((e.clientX - r.left) / r.width * n));
+  };
+}
+
+document.getElementById("analyzeAll").onclick = startAnalysis;
+
+
+/* ---------- Pfeile für die besten drei Züge ---------- */
+function drawArrow() {
+  const old = document.getElementById("arrow"); if (old) old.remove();
+  renderCands();
+  if (!cands || cands.fen !== game.fen() || batch.running) return;
+  const pos = q => { const f = "abcdefgh".indexOf(q[0]), r = +q[1] - 1; return [(flipped ? 7 - f : f) + .5, (flipped ? r : 7 - r) + .5]; };
+  let defs = "", body = "";
+  [3, 2, 1].forEach(i => {   // Nr. 1 wird zuletzt gezeichnet und liegt oben
+    const L = cands.lines[i];
+    if (!L) return;
+    const st = ARROW_STYLE[i - 1], u = L.uci;
+    const [x1, y1] = pos(u.slice(0, 2)), [x2, y2] = pos(u.slice(2, 4));
+    const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy) || 1;
+    defs += '<marker id="ah' + i + '" markerWidth="4" markerHeight="4" refX="2" refY="2" orient="auto"><path d="M0,0 L4,2 L0,4z" fill="' + st.c + '"/></marker>';
+    body += '<line x1="' + x1 + '" y1="' + y1 + '" x2="' + (x2 - dx / len * (.15 + st.w * 1.6)) + '" y2="' + (y2 - dy / len * (.15 + st.w * 1.6)) +
+      '" stroke="' + st.c + '" stroke-width="' + st.w + '" stroke-linecap="round" opacity="' + (i === 1 ? .92 : .75) + '" marker-end="url(#ah' + i + ')"/>';
+  });
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.id = "arrow"; svg.setAttribute("viewBox", "0 0 8 8");
+  svg.innerHTML = "<defs>" + defs + "</defs>" + body;
+  boardEl.appendChild(svg);
+}
+
+/* ---------- Partien von chess.com / Lichess ---------- */
+function loadPgnText(text) {
+  const g = new Chess();
+  if (!g.load_pgn(text)) { statusEl.textContent = "Diese Partie konnte nicht gelesen werden."; return; }
+  statusEl.textContent = "";
+  line = g.history({ verbose: true }); an = null; setPlayers(g); clearSummary(); goTo(0);
+}
+
+async function fetchGames() {
+  const src = document.getElementById("source").value;
+  const user = document.getElementById("user").value.trim();
+  const listEl = document.getElementById("gameList");
+  if (!user) { statusEl.textContent = "Bitte gib einen Benutzernamen ein."; return; }
+  listEl.textContent = "Lade …"; statusEl.textContent = "";
+  try {
+    let games = [];
+    if (src === "chesscom") {
+      const a = await (await fetch("https://api.chess.com/pub/player/" + encodeURIComponent(user.toLowerCase()) + "/games/archives")).json();
+      for (let k = a.archives.length - 1; k >= 0 && games.length < 15; k--) {
+        const d = await (await fetch(a.archives[k])).json();
+        games.push(...d.games.reverse());
+      }
+      games = games.slice(0, 15).filter(g => g.pgn).map(g => ({
+        label: g.white.username + " – " + g.black.username, date: new Date(g.end_time * 1000), pgn: g.pgn }));
+    } else {
+      const r = await fetch("https://lichess.org/api/games/user/" + encodeURIComponent(user) + "?max=15&pgnInJson=true",
+        { headers: { Accept: "application/x-ndjson" } });
+      if (!r.ok) throw new Error("nicht gefunden");
+      const nm = p => p.user ? p.user.name : "Computer";
+      games = (await r.text()).trim().split("\n").filter(Boolean).map(l => JSON.parse(l)).map(g => ({
+        label: nm(g.players.white) + " – " + nm(g.players.black), date: new Date(g.createdAt), pgn: g.pgn }));
+    }
+    listEl.innerHTML = "";
+    if (!games.length) { listEl.textContent = "Keine Partien gefunden."; return; }
+    games.forEach(g => {
+      const b = document.createElement("button");
+      b.textContent = g.date.toLocaleDateString("de-DE") + "  ·  " + g.label;
+      b.onclick = () => loadPgnText(g.pgn);
+      listEl.appendChild(b);
+    });
+  } catch (e) {
+    listEl.textContent = "";
+    statusEl.textContent = "Benutzer nicht gefunden oder keine Verbindung. Prüfe die Schreibweise.";
+  }
+}
+document.getElementById("fetchGames").onclick = fetchGames;
+document.getElementById("user").addEventListener("keydown", e => { if (e.key === "Enter") fetchGames(); });
+
+render();
+if (typeof Chess === "undefined") {
+  statusEl.textContent = "Fehler: chess.js konnte nicht geladen werden. Bist du online?";
+} else {
+  startEngine();
+}
+</script>
+</body>
+</html>
